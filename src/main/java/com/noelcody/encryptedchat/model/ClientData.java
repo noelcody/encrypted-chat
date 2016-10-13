@@ -2,7 +2,6 @@ package com.noelcody.encryptedchat.model;
 
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.security.PublicKey;
 
 import io.norberg.automatter.AutoMatter;
 
@@ -14,7 +13,5 @@ public interface ClientData {
   String screenname();
 
   PrintWriter printWriter();
-
-  PublicKey publicKey();
 
 }

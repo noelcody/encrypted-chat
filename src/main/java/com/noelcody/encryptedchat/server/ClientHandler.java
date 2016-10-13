@@ -2,56 +2,44 @@ package com.noelcody.encryptedchat.server;
 
 import com.google.common.base.Throwables;
 
-import com.noelcody.encryptedchat.encryption.KeySerializer;
 import com.noelcody.encryptedchat.model.ClientData;
 import com.noelcody.encryptedchat.model.ClientDataBuilder;
+import com.noelcody.encryptedchat.model.ConnectRequest;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.security.PublicKey;
+import java.time.Duration;
 
 public class ClientHandler {
 
   private final ClientDirectory clientDirectory;
-  private final KeySerializer keySerializer;
   private final Socket clientSocket;
 
   private final BufferedReader clientReader;
   private final PrintWriter clientWriter;
 
-  public ClientHandler(ClientDirectory clientDirectory, KeySerializer keySerializer, Socket clientSocket) {
+  public ClientHandler(ClientDirectory clientDirectory, Socket clientSocket) throws IOException {
     this.clientDirectory = clientDirectory;
-    this.keySerializer = keySerializer;
     this.clientSocket = clientSocket;
 
-    try {
-      clientReader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-      clientWriter = new PrintWriter(clientSocket.getOutputStream(), true);
-    } catch (IOException e) {
-      throw Throwables.propagate(e);
-    }
+    clientReader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+    clientWriter = new PrintWriter(clientSocket.getOutputStream(), true);
   }
 
   public void start() throws IOException {
-    ClientData clientData = handleLoginRequest();
+    ClientData clientData = handleLogin();
     ClientData buddyData = handleConnectRequest(clientData);
     handleChat(buddyData);
   }
 
-  private ClientData handleLoginRequest() throws IOException {
-    String loginMessage = clientReader.readLine();
-
-    String screenname = loginMessage.split(":", 2)[0]; // TODO wrap this up
-    String publicKeyString = loginMessage.split(":", 2)[1];
-    PublicKey publicKey = keySerializer.keyFromString(publicKeyString);
-
+  private ClientData handleLogin() throws IOException {
+    String screenname = clientReader.readLine();
     ClientData clientData = new ClientDataBuilder()
         .socket(clientSocket)
         .screenname(screenname)
-        .publicKey(publicKey)
         .printWriter(clientWriter)
         .build();
     clientDirectory.addClient(clientData);
@@ -60,34 +48,38 @@ public class ClientHandler {
   }
 
   /**
-   * Receive request to connect to other user (buddy) via screenname. Send buddy's public key back to client.
+   * Receive request to connect to other user (buddy). Create connection and forward request to buddy.
    */
   private ClientData handleConnectRequest(ClientData clientData) throws IOException {
-    String buddyScreenname = clientReader.readLine();
-    waitUntilBuddyLogsIn(buddyScreenname);
+    String connectRequestString = clientReader.readLine();
+    String buddyScreenname = ConnectRequest.getToScreenname(connectRequestString);
 
-    clientDirectory.addChatConnection(clientData.screenname(), buddyScreenname);
+    waitForLogin(buddyScreenname);
 
     ClientData buddyData = clientDirectory.getClient(buddyScreenname);
-    String buddyPublicKey = keySerializer.keyToString(buddyData.publicKey());
-    clientWriter.println(buddyPublicKey);
+    buddyData.printWriter().println(connectRequestString);
 
     return buddyData;
   }
 
   /**
-   * Pass encrypted messages from client to buddy indefinitely.
+   * Pass messages from client to buddy.
    */
   private void handleChat(ClientData buddyData) throws IOException {
     while (true) {
       String chatMessage = clientReader.readLine();
+      System.out.println(String.format("[server] passing message to %s: %s", buddyData.screenname(), chatMessage));
       buddyData.printWriter().println(chatMessage);
     }
   }
 
-  private void waitUntilBuddyLogsIn(String buddyScreenname) {
+  private void waitForLogin(String buddyScreenname) {
     while (!clientDirectory.containsClient(buddyScreenname)) {
-      // wait
+      try {
+        Thread.sleep(Duration.ofSeconds(1).toMillis());
+      } catch (InterruptedException e) {
+        throw Throwables.propagate(e);
+      }
     }
   }
 }

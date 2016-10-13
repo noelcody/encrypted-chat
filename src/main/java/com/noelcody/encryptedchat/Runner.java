@@ -1,10 +1,13 @@
 package com.noelcody.encryptedchat;
 
+import com.google.common.base.Throwables;
 import com.google.common.net.HostAndPort;
 
 import com.noelcody.encryptedchat.client.Client;
+import com.noelcody.encryptedchat.client.ClientConnection;
+import com.noelcody.encryptedchat.encryption.AsymmetricKeyMgr;
 import com.noelcody.encryptedchat.encryption.Encrypter;
-import com.noelcody.encryptedchat.encryption.KeySerializer;
+import com.noelcody.encryptedchat.encryption.SymmetricKeyMgr;
 import com.noelcody.encryptedchat.server.ClientDirectory;
 import com.noelcody.encryptedchat.server.Server;
 
@@ -18,27 +21,45 @@ public class Runner {
   private static final String SCREENNAME_BOB = "bob";
 
   public static void main(String[] args) throws IOException {
-    KeySerializer keySerializer = new KeySerializer();
-    Encrypter encrypter = new Encrypter();
     ClientDirectory clientDirectory = new ClientDirectory();
+    startServer(clientDirectory);
 
-    startServer(keySerializer, clientDirectory);
+    AsymmetricKeyMgr asymmetricKeyMgr = new AsymmetricKeyMgr();
+    SymmetricKeyMgr symmetricKeyMgr = new SymmetricKeyMgr();
+    Encrypter encrypter = new Encrypter();
 
     HostAndPort serverHostPort = HostAndPort.fromParts(InetAddress.getByName(null).getHostAddress(), PORT);
-    Client aliceClient = new Client(serverHostPort, encrypter, keySerializer, SCREENNAME_ALICE);
-    Client bobClient = new Client(serverHostPort, encrypter, keySerializer, SCREENNAME_BOB);
+    Client aliceClient = new Client(SCREENNAME_ALICE, encrypter, asymmetricKeyMgr, symmetricKeyMgr, serverHostPort);
+    Client bobClient = new Client(SCREENNAME_BOB, encrypter, asymmetricKeyMgr, symmetricKeyMgr, serverHostPort);
 
-    aliceClient.logIn();
-    bobClient.logIn();
+    new Thread(() -> {
+      aliceClient.logIn();
+      try {
+        ClientConnection connectionToBob = aliceClient.initiateConnection(SCREENNAME_BOB);
+        connectionToBob.sendChat("hi");
+      } catch (IOException e) {
+        throw Throwables.propagate(e);
+      }
+    }).start();
 
-    aliceClient.connectToBuddy(SCREENNAME_BOB);
-    bobClient.connectToBuddy(SCREENNAME_ALICE);
-
-    aliceClient.sendChat("hello");
-    bobClient.sendChat("world");
+    new Thread(() -> {
+      bobClient.logIn();
+      try {
+        ClientConnection connectionToAlice = bobClient.acceptConnection();
+        connectionToAlice.sendChat("hello");
+      } catch (IOException e) {
+        throw Throwables.propagate(e);
+      }
+    }).start();
   }
 
-  private static void startServer(KeySerializer keySerializer, ClientDirectory clientDirectory) {
-    new Thread(() -> new Server(keySerializer, clientDirectory).start(PORT)).start();
+  private static void startServer(ClientDirectory clientDirectory) {
+    new Thread(() -> {
+      try {
+        new Server(clientDirectory).start(PORT);
+      } catch (IOException e) {
+        throw Throwables.propagate(e);
+      }
+    }).start();
   }
 }
